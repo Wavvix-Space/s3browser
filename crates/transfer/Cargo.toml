@@ -1,0 +1,20 @@
+[package]
+name = "transfer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-channel.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+fastrand.workspace = true
+md-5.workspace = true
+rusqlite.workspace = true
+s3api.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+futures-executor = "0.3"
+s3api-reqwest = { path = "../s3api-reqwest" }

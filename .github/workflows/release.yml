@@ -1,0 +1,118 @@
+# 打 v* 标签就出 Windows 和 macOS 产物，并建一个 GitHub Release 挂上去。
+# 手动触发（workflow_dispatch）只编译传产物，不发版，方便试改。
+#
+# 产物名字不是随便起的：应用内检查更新（crates/s3browser/src/update.rs）
+# 只认发布里叫 `s3browser.exe` 的资产，校验和认 `sha256sums.txt`
+# （GNU 二进制模式格式 `<哈希>  *<文件名>`，按文件名匹配）。
+# macOS 的包应用内不自动更，zip 里就一个通用二进制。
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # 建 Release 要用
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    name: 构建 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 跑测试
+        run: cargo test --workspace
+
+      - name: 编译（Windows）
+        if: runner.os == 'Windows'
+        run: cargo build --release -p s3browser
+
+      # macOS 出通用包：两个架构各编一遍，lipo 合一个文件。
+      # 13.0 是 gpui 那边的最低线，不压的话产物只认 runner 上那版系统。
+      - name: 编译（macOS，arm64 + x86_64）
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release -p s3browser --target aarch64-apple-darwin
+          cargo build --release -p s3browser --target x86_64-apple-darwin
+
+      - name: 打包（Windows）
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/s3browser.exe dist/
+          cd dist
+          sha256sum --binary s3browser.exe > sha256sums-windows.txt
+          cat sha256sums-windows.txt
+
+      # zip 里的二进制在包根，校验和按发布资产名算，跟 update.rs 的匹配口径一致
+      - name: 打包（macOS）
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/s3browser \
+            target/x86_64-apple-darwin/release/s3browser \
+            -output s3browser
+          lipo -info s3browser
+          # arm64 的 Mach-O 没签名根本跑不起来，补一份 ad-hoc 的
+          codesign --force --sign - s3browser
+          zip -j dist/s3browser-macos-universal.zip s3browser
+          # macOS 上没有 GNU 的 sha256sum，只有 shasum
+          printf '%s  *%s\n' \
+            "$(shasum -a 256 dist/s3browser-macos-universal.zip | cut -d' ' -f1)" \
+            s3browser-macos-universal.zip > dist/sha256sums-macos.txt
+          cat dist/sha256sums-macos.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: 发 Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: artifacts/
+          merge-multiple: true
+
+      # 两边各交一份校验和片段，合成发布里唯一的 sha256sums.txt
+      - name: 合并校验和
+        run: |
+          cat artifacts/sha256sums-*.txt > artifacts/sha256sums.txt
+          rm artifacts/sha256sums-*.txt
+          cat artifacts/sha256sums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/s3browser.exe
+            artifacts/s3browser-macos-universal.zip
+            artifacts/sha256sums.txt

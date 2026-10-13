@@ -1,0 +1,17 @@
+[package]
+name = "s3api-reqwest"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-channel.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+http.workspace = true
+reqwest.workspace = true
+s3api.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+futures-executor = "0.3"
+

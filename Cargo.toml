@@ -1,0 +1,68 @@
+[workspace]
+resolver = "3"
+members = ["crates/s3api", "crates/s3api-reqwest", "crates/transfer", "crates/s3browser"]
+
+[workspace.package]
+version = "1.1.1"
+edition = "2024"
+
+[workspace.dependencies]
+gpui-kit = "0.6.1"
+s3api = { path = "crates/s3api" }
+s3api-reqwest = { path = "crates/s3api-reqwest" }
+transfer = { path = "crates/transfer" }
+
+async-channel = "2"
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+hex = "0.4"
+hmac = "0.12"
+http = "1"
+sha2 = "0.10"
+fastrand = "2"
+md-5 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros", "fs", "io-util"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+url = "2"
+
+# 依赖按大小优化，自己的代码和哈希按速度优化。
+#
+# 体积的大头是 gpui 那一套（渲染、SVG、图像解码、字体），它们的代码路径每帧只跑
+# 一遍或者干脆不跑，压成 "s" 省了四分半 MB；真正一秒钟跑几万次的东西在下面单独
+# 开满。实测这么配比全程 opt-level = 3 还快一点——依赖小了，指令缓存装得下。
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# 哈希在传输路上：分片上传每片都要算一遍 SHA256 签名，下载完还要校验 MD5。
+# 按大小优化会把 SIMD 压掉，32 MiB 的 SHA256 从 16 ms 变成 47 ms，慢三倍。
+# 这几个包本身才几十 KB，开满换不回多少体积。
+[profile.release.package.sha2]
+opt-level = 3
+[profile.release.package.md-5]
+opt-level = 3
+[profile.release.package.hmac]
+opt-level = 3
+[profile.release.package.digest]
+opt-level = 3
+
+# 自己的三个 crate：十万条目的排序、过滤、翻页都在这儿，是跟手不跟手的关键。
+# 加起来不到 1 MB，开满也胖不了多少。
+[profile.release.package.s3browser]
+opt-level = 3
+[profile.release.package.s3api]
+opt-level = 3
+[profile.release.package.transfer]
+opt-level = 3
